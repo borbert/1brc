@@ -1,5 +1,6 @@
 package main
 
 func main() {
-	Initial(false)
+	// Initial(false)
+	second_concurrency(false)
 }
