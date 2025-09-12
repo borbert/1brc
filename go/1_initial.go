@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -16,8 +17,10 @@ func Initial(verbose bool) {
 	cityTemps := extract_data("../data/measurements_1b.txt")
 
 	iter := 0
+	var avg float64
+
 	for city, temps := range cityTemps {
-		stats := Stats{Min: temps[0], Max: temps[0], Average: 0, Sum: 0, Count: 0}
+		stats := Stats{Min: temps[0], Max: temps[0], Average: 0, Count: 0}
 		for _, temp := range temps {
 			if temp < stats.Min {
 				stats.Min = temp
@@ -26,9 +29,12 @@ func Initial(verbose bool) {
 				stats.Max = temp
 			}
 			stats.Count++
-			stats.Sum += temp
-			stats.Average = stats.Sum / float64(stats.Count)
+			avg += temp
 		}
+
+		avg /= float64(stats.Count)
+		stats.Average = math.Ceil(avg*10) / 10
+
 		if verbose {
 			fmt.Printf(
 				"City: %s, Min: %.2f, Max: %.2f, Average: %.2f, Count: %d\n",

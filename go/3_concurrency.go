@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -13,7 +14,7 @@ import (
 func third_concurrency(verbose bool) {
 	start := time.Now()
 
-	lines := make(chan string, 100)               // buffered channel
+	lines := make(chan []string, 100)             // buffered channel
 	resultChan := make(chan map[string][]float64) // channel for results
 
 	var wg sync.WaitGroup
@@ -21,11 +22,30 @@ func third_concurrency(verbose bool) {
 
 	// reader
 	go func() {
-		file, _ := os.Open("../data/measurements_1b.txt")
+		file, err := os.Open("../data/measurements_1b.txt")
+		if err != nil {
+			panic(err)
+		}
 		defer file.Close()
+
 		scanner := bufio.NewScanner(file)
+		batchSize := 100
+		batch := make([]string, 0, batchSize)
+
 		for scanner.Scan() {
-			lines <- scanner.Text()
+			if len(batch) == batchSize {
+				batchCopy := make([]string, batchSize)
+				copy(batchCopy, batch)
+				lines <- batchCopy
+				batch = batch[:0]
+			}
+			if len(batch) > 0 {
+				batchCopy := make([]string, len(batch))
+				copy(batchCopy, batch)
+				lines <- batchCopy
+
+			}
+
 		}
 		fmt.Println("File scanned successfully")
 		close(lines)
@@ -35,11 +55,13 @@ func third_concurrency(verbose bool) {
 	go func() {
 		defer wg.Done()
 		cityTemps := make(map[string][]float64)
-		for line := range lines {
-			elements := strings.Split(line, ";")
-			city := elements[0]
-			temp, _ := strconv.ParseFloat(elements[1], 64)
-			cityTemps[city] = append(cityTemps[city], temp)
+		for batch := range lines {
+			for _, line := range batch {
+				elements := strings.Split(line, ";")
+				city := elements[0]
+				temp, _ := strconv.ParseFloat(elements[1], 64)
+				cityTemps[city] = append(cityTemps[city], temp)
+			}
 		}
 		resultChan <- cityTemps
 		fmt.Println("Data processed into map successfully")
@@ -50,8 +72,10 @@ func third_concurrency(verbose bool) {
 
 	// Process the map
 	iter := 0
+	var avg float64
+
 	for city, temps := range cityTemps {
-		stats := Stats{Min: temps[0], Max: temps[0], Average: 0, Sum: 0, Count: 0}
+		stats := Stats{Min: temps[0], Max: temps[0], Average: 0, Count: 0}
 		for _, temp := range temps {
 			if temp < stats.Min {
 				stats.Min = temp
@@ -60,9 +84,12 @@ func third_concurrency(verbose bool) {
 				stats.Max = temp
 			}
 			stats.Count++
-			stats.Sum += temp
-			stats.Average = stats.Sum / float64(stats.Count)
+			avg += temp
 		}
+
+		avg /= float64(stats.Count)
+		stats.Average = math.Ceil(avg*10) / 10
+
 		if verbose {
 			fmt.Printf(
 				"City: %s, Min: %.2f, Max: %.2f, Average: %.2f, Count: %d\n",
