@@ -21,14 +21,14 @@ type Stats2 struct {
 
 // Tune these for your machine
 const (
-	batchSize = 1000 // lines per batch
+	batchSize = 100000 // lines per batch
 	inputFile = "../data/measurements_1b.txt"
 )
 
-func float_to_int(verbose bool) {
+func multiple_optimizations(verbose bool) {
 	start := time.Now()
 
-	workerCount := 16 * runtime.NumCPU()
+	workerCount := 32 * runtime.NumCPU()
 
 	// Channel for batched lines
 	batches := make(chan []string, workerCount)
