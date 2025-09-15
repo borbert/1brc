@@ -1,5 +1,5 @@
 const std = @import("std");
-const BufSize = 4 * 1024 * 1024; // 4MB buffer
+// const BufSize = 4 * 1024 * 1024; // 4MB buffer
 
 const CityStats = struct {
     min: f64,
@@ -29,51 +29,78 @@ pub fn main() !void {
     var file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
 
-    var buf: [BufSize]u8 = undefined;
-    var carry: [4096]u8 = undefined;
-    var carry_len: usize = 0;
+    // var buf: [BufSize]u8 = undefined;
+    // var carry: [4096]u8 = undefined;
+    // var carry_len: usize = 0;
+
+    //get file stats for the map
+    const file_stats = try file.stat();
+    // allocate memory for the entire file
+    const mapped_memory = try std.posix.mmap(null, file_stats.size, std.posix.PROT.READ, .{ .TYPE = .PRIVATE }, file.handle, 0);
+    defer std.posix.munmap(mapped_memory);
+
     var lines_read: usize = 0;
     var bad_lines: usize = 0;
 
-    while (true) {
-        const n = try file.read(&buf);
-        if (n == 0 and carry_len == 0) break;
+    // while (true) {
+    //     const n = try file.read(&buf);
+    //     if (n == 0 and carry_len == 0) break;
 
-        var start: usize = 0;
-        for (buf[0..n], 0..) |b, i| {
-            if (b == '\n') {
-                if (carry_len > 0) {
-                    processLine(carry[0..carry_len], &cityTemps, allocator) catch {
-                        bad_lines += 1;
-                    };
-                    carry_len = 0;
-                } else {
-                    processLine(buf[start..i], &cityTemps, allocator) catch {
-                        bad_lines += 1;
-                    };
-                }
-                lines_read += 1;
-                start = i + 1;
+    //     var start: usize = 0;
+    //     for (buf[0..n], 0..) |b, i| {
+    //         if (b == '\n') {
+    //             if (carry_len > 0) {
+    //                 processLine(carry[0..carry_len], &cityTemps, allocator) catch {
+    //                     bad_lines += 1;
+    //                 };
+    //                 carry_len = 0;
+    //             } else {
+    //                 processLine(buf[start..i], &cityTemps, allocator) catch {
+    //                     bad_lines += 1;
+    //                 };
+    //             }
+    //             lines_read += 1;
+    //             start = i + 1;
 
-                // Progress indicator
-                if (lines_read % 100_000_000 == 0) {
-                    std.debug.print("Processed {d}M lines\n", .{lines_read / 1_000_000});
-                }
+    //             // Progress indicator
+    //             if (lines_read % 100_000_000 == 0) {
+    //                 std.debug.print("Processed {d}M lines\n", .{lines_read / 1_000_000});
+    //             }
+    //         }
+    //     }
+
+    //     if (start < n) {
+    //         const l = n - start;
+    //         if (l > carry.len) return error.LineTooLong;
+    //         std.mem.copyForwards(u8, carry[0..l], buf[start..n]);
+    //         carry_len = l;
+    //     } else {
+    //         carry_len = 0;
+    //     }
+    // }
+
+    // if (carry_len > 0) {
+    //     processLine(carry[0..carry_len], &cityTemps, allocator) catch {
+    //         bad_lines += 1;
+    //     };
+    //     lines_read += 1;
+    // }
+    //
+    var start: usize = 0;
+    for (mapped_memory, 0..) |b, i| {
+        if (b == '\n') {
+            if (i > start) {
+                processLine(mapped_memory[start..i], &cityTemps, allocator) catch {
+                    bad_lines += 1;
+                };
             }
-        }
-
-        if (start < n) {
-            const l = n - start;
-            if (l > carry.len) return error.LineTooLong;
-            std.mem.copyForwards(u8, carry[0..l], buf[start..n]);
-            carry_len = l;
-        } else {
-            carry_len = 0;
+            lines_read += 1;
+            start = i + 1;
         }
     }
 
-    if (carry_len > 0) {
-        processLine(carry[0..carry_len], &cityTemps, allocator) catch {
+    if (start < mapped_memory.len) {
+        processLine(mapped_memory[start..], &cityTemps, allocator) catch {
             bad_lines += 1;
         };
         lines_read += 1;
