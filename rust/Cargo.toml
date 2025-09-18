@@ -1,11 +1,17 @@
 [package]
-name = "billion_row_challange"
+name = "billion_row_challenge"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-anyhow = "1.0"
-tokio = { version = "1", features = ["full"] }
+rayon = "1.7"
+memmap2 = "0.9"
+rustc-hash = "1.1"  # Faster HashMap
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
 
 [[bin]]
 name = "billion_row_challange"

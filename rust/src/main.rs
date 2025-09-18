@@ -1,100 +1,229 @@
+use memmap2::Mmap;
+use rayon::prelude::*;
+use rustc_hash::FxHashMap; // Faster than std HashMap
 use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
+
+#[derive(Debug, Clone)]
+struct TemperatureStats {
+    min: f64,
+    max: f64,
+    sum: f64,
+    count: u64,
+}
+
+impl TemperatureStats {
+    #[inline]
+    fn new(temp: f64) -> Self {
+        Self {
+            min: temp,
+            max: temp,
+            sum: temp,
+            count: 1,
+        }
+    }
+
+    #[inline]
+    fn update(&mut self, temp: f64) {
+        if temp < self.min {
+            self.min = temp;
+        }
+        if temp > self.max {
+            self.max = temp;
+        }
+        self.sum += temp;
+        self.count += 1;
+    }
+
+    #[inline]
+    fn merge(&mut self, other: &TemperatureStats) {
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+        self.sum += other.sum;
+        self.count += other.count;
+    }
+
+    #[inline]
+    fn mean(&self) -> f64 {
+        self.sum / self.count as f64
+    }
+}
 
 fn main() {
     let brc_path = Path::new("../data/measurements_1b.txt");
 
-    // Check if file exists first
     if !brc_path.exists() {
         eprintln!("File not found: {}", brc_path.display());
         return;
     }
 
-    println!("Starting buffered file reading...");
-    read_file_buffered(brc_path);
+    println!("Available CPU cores: {}", rayon::current_num_threads());
+    println!("Starting processing...");
+
+    process_ultra_optimized(brc_path);
 }
 
-fn read_file_buffered(path: &Path) {
+fn process_ultra_optimized(path: &Path) {
     let start = std::time::Instant::now();
 
-    // Open file with buffered reader instead of reading entire file
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(e) => {
-            eprintln!("Error opening file: {}", e);
-            return;
-        }
-    };
+    // Memory-map the file
+    let file = File::open(path).unwrap();
+    let mmap = unsafe { Mmap::map(&file).unwrap() };
 
-    let reader = BufReader::new(file);
-    let mut line_count = 0;
-    let mut first_lines = Vec::new();
+    let mmap_duration = start.elapsed();
+    println!("File memory-mapped in {:?}", mmap_duration);
 
-    // Read line by line instead of loading everything into memory
-    for (i, line_result) in reader.lines().enumerate() {
-        match line_result {
-            Ok(line) => {
-                line_count += 1;
+    // Split file into chunks
+    let num_threads = rayon::current_num_threads();
+    let chunk_size = mmap.len() / num_threads;
+    let mut chunks = Vec::with_capacity(num_threads);
 
-                // Store first 5 lines for display
-                if i < 5 {
-                    first_lines.push(line);
-                }
-
-                // Print progress every 10 million lines
-                if line_count % 100_000_000 == 0 {
-                    let elapsed = start.elapsed();
-                    println!(
-                        "Processed {} million lines in {:?}",
-                        line_count / 1_000_000,
-                        elapsed
-                    );
-                }
+    for i in 0..num_threads {
+        let start_pos = if i == 0 {
+            0
+        } else {
+            let mut pos = i * chunk_size;
+            while pos < mmap.len() && mmap[pos] != b'\n' {
+                pos += 1;
             }
-            Err(e) => {
-                eprintln!("Error reading line {}: {}", i + 1, e);
-                return;
+            if pos < mmap.len() {
+                pos + 1
+            } else {
+                pos
             }
+        };
+
+        let end_pos = if i == num_threads - 1 {
+            mmap.len()
+        } else {
+            let mut pos = (i + 1) * chunk_size;
+            while pos < mmap.len() && mmap[pos] != b'\n' {
+                pos += 1;
+            }
+            pos
+        };
+
+        if start_pos < mmap.len() && start_pos < end_pos {
+            chunks.push((start_pos, end_pos));
         }
     }
 
-    let duration = start.elapsed();
+    println!("File split into {} chunks", chunks.len());
 
-    println!("File read successfully with buffered reader!");
-    println!("Lines processed: {}", line_count);
+    // Process chunks in parallel
+    let process_start = std::time::Instant::now();
 
-    // Print first few lines
-    for (i, line) in first_lines.iter().enumerate() {
-        println!("Line {}: {}", i + 1, line);
+    let results: Vec<(FxHashMap<String, TemperatureStats>, usize)> = chunks
+        .par_iter()
+        .map(|&(start, end)| {
+            let chunk = &mmap[start..end];
+            process_chunk_ultra_fast(chunk)
+        })
+        .collect();
+
+    let process_duration = process_start.elapsed();
+    println!("Parallel processing completed in {:?}", process_duration);
+
+    // Merge results
+    let merge_start = std::time::Instant::now();
+
+    let mut final_stats: FxHashMap<String, TemperatureStats> = FxHashMap::default();
+    let mut total_lines = 0;
+
+    for (chunk_results, lines) in results {
+        total_lines += lines;
+        for (city, stats) in chunk_results {
+            final_stats
+                .entry(city)
+                .and_modify(|existing| existing.merge(&stats))
+                .or_insert(stats);
+        }
     }
 
-    println!("Time taken: {:?}", duration);
+    let merge_duration = merge_start.elapsed();
+    let total_duration = start.elapsed();
 
-    // Calculate processing rate
-    let lines_per_second = line_count as f64 / duration.as_secs_f64();
-    println!("Processing rate: {:.0} lines/second", lines_per_second);
+    println!("\n=== Results ===");
+    println!("Total lines processed: {}", total_lines);
+    println!("Unique cities: {}", final_stats.len());
+    println!("Total time: {:?}", total_duration);
+    println!(
+        "Processing rate: {:.0} lines/second",
+        total_lines as f64 / total_duration.as_secs_f64()
+    );
 
-    // Estimate memory usage (much lower now!)
-    let estimated_memory = std::mem::size_of::<BufReader<File>>() + 8192; // Default buffer size
-    println!("Estimated memory usage: {}", format_bytes(estimated_memory));
+    // Show results
+    let mut results: Vec<_> = final_stats.iter().collect();
+    results.sort_by_key(|&(city, _)| city);
 }
 
-fn format_bytes(bytes: usize) -> String {
-    const KB: usize = 1_024;
-    const MB: usize = KB * 1_024;
-    const GB: usize = MB * 1_024;
-    const TB: usize = GB * 1_024;
+// Ultra-optimized chunk processing with custom float parsing
+#[inline(never)] // Prevent inlining to see in profiler
+fn process_chunk_ultra_fast(chunk: &[u8]) -> (FxHashMap<String, TemperatureStats>, usize) {
+    let mut stats: FxHashMap<String, TemperatureStats> = FxHashMap::default();
+    let mut line_count = 0;
 
-    if bytes >= TB {
-        format!("{:.2} TB", bytes as f64 / TB as f64)
-    } else if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} bytes", bytes)
+    let mut i = 0;
+    let len = chunk.len();
+
+    while i < len {
+        // Find line start
+        let line_start = i;
+
+        // Find semicolon
+        while i < len && chunk[i] != b';' {
+            i += 1;
+        }
+
+        if i >= len {
+            break;
+        }
+        let semicolon_pos = i;
+        i += 1; // Skip semicolon
+
+        // Find line end
+        let temp_start = i;
+        while i < len && chunk[i] != b'\n' {
+            i += 1;
+        }
+
+        if i > temp_start && semicolon_pos > line_start {
+            // Extract city (avoiding UTF-8 validation where possible)
+            let city_bytes = &chunk[line_start..semicolon_pos];
+            if let Ok(city) = std::str::from_utf8(city_bytes) {
+                if !city.is_empty() {
+                    // Extract and parse temperature
+                    let temp_bytes = &chunk[temp_start..i];
+                    if let Ok(temp_str) = std::str::from_utf8(temp_bytes) {
+                        if let Ok(temperature) = fast_parse_float(temp_str) {
+                            match stats.get_mut(city) {
+                                Some(city_stats) => {
+                                    city_stats.update(temperature);
+                                }
+                                None => {
+                                    stats.insert(
+                                        city.to_string(),
+                                        TemperatureStats::new(temperature),
+                                    );
+                                }
+                            }
+                            line_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        i += 1; // Skip newline
     }
+
+    (stats, line_count)
+}
+
+// Custom fast float parser for the specific format
+#[inline]
+fn fast_parse_float(s: &str) -> Result<f64, std::num::ParseFloatError> {
+    // For the billion row challenge, we could implement a custom parser
+    // but std::parse is already quite optimized for this use case
+    s.parse::<f64>()
 }
